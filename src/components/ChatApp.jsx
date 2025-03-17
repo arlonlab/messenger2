@@ -7,10 +7,13 @@ const ChatApp = () => {
   const [chatId, setChatId] = useState("");
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
-  const [userId, setUserId] = useState(1);
+  const userId = 1;
 
   useEffect(() => {
     socket.on("receive_message", (msg) => {
+      if (!msg.senderId) {
+        msg.senderId = -1; // Fallback in case senderId is missing
+      }
       setMessages((prevMessages) => [...prevMessages, msg]);
     });
 
@@ -36,8 +39,11 @@ const ChatApp = () => {
   const sendMessage = () => {
     if (chatId && message.trim()) {
       const newMessage = { senderId: userId, content: message };
-      setMessages((prevMessages) => [...prevMessages, newMessage]);
-      socket.emit("send_message", { chatId, senderId: userId, content: message });
+      socket.emit("send_message", {
+        chatId,
+        senderId: userId,
+        content: message,
+      });
       setMessage("");
     }
   };
@@ -66,9 +72,16 @@ const ChatApp = () => {
             {messages.map((msg, index) => (
               <li
                 key={index}
-                className={`p-2 mb-2 rounded-lg shadow-sm ${msg.senderId === userId ? "bg-green-200 text-right" : "bg-white text-left"}`}
+                className={`p-2 mb-2 rounded-lg shadow-sm ${
+                  msg.senderId === userId
+                    ? "bg-green-200 text-right"
+                    : "bg-white text-left"
+                }`}
               >
-                <span className="font-semibold">{msg.senderId === userId ? "Me" : `User ${msg.senderId}`}:</span> {msg.content}
+                <span className="font-semibold">
+                  {msg.senderId === userId ? "Me" : `User ${msg.senderId}`}:
+                </span>{" "}
+                {msg.content}
               </li>
             ))}
           </ul>
