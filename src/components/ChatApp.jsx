@@ -1,13 +1,17 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 
 const socket = io("https://specialbond.arlonlabalan.com");
+const peerConnections = {};
 
 const ChatApp = () => {
   const [chatId, setChatId] = useState("");
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
   const [sentMessages, setSentMessages] = useState([]);
+  const [stream, setStream] = useState(null);
+  const videoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
 
   useEffect(() => {
     socket.on("receive_message", (msg) => {
@@ -16,7 +20,7 @@ const ChatApp = () => {
           prevMessages.length > 0 &&
           prevMessages[prevMessages.length - 1].content === msg.content
         ) {
-          return prevMessages; // Prevent duplicate display
+          return prevMessages;
         }
         return [
           ...prevMessages,
@@ -25,8 +29,43 @@ const ChatApp = () => {
       });
     });
 
+    socket.on("video_chat_started", async ({ from }) => {
+      if (from !== socket.id) {
+        const peerConnection = createPeerConnection(from);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit("offer", { offer, to: from });
+      }
+    });
+
+    socket.on("offer", async ({ offer, from }) => {
+      const peerConnection = createPeerConnection(from);
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      socket.emit("answer", { answer, to: from });
+    });
+
+    socket.on("answer", async ({ answer, from }) => {
+      const peerConnection = peerConnections[from];
+      if (peerConnection) {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      }
+    });
+
+    socket.on("ice-candidate", ({ candidate, from }) => {
+      const peerConnection = peerConnections[from];
+      if (peerConnection) {
+        peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    });
+
     return () => {
       socket.off("receive_message");
+      socket.off("video_chat_started");
+      socket.off("offer");
+      socket.off("answer");
+      socket.off("ice-candidate");
     };
   }, [sentMessages]);
 
@@ -62,13 +101,42 @@ const ChatApp = () => {
 
       setMessages((prev) => {
         if (prev.length > 0 && prev[prev.length - 1].content === message) {
-          return prev; // Prevent duplicate display
+          return prev;
         }
         return [...prev, newMessage];
       });
       setSentMessages((prev) => [...prev, messageId]);
       setMessage("");
     }
+  };
+
+  const startVideoChat = async () => {
+    try {
+      const userStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setStream(userStream);
+      videoRef.current.srcObject = userStream;
+      socket.emit("start_video_chat", { chatId });
+    } catch (error) {
+      console.error("Error accessing media devices:", error);
+    }
+  };
+
+  const createPeerConnection = (peerId) => {
+    const peerConnection = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    });
+    peerConnections[peerId] = peerConnection;
+
+    stream.getTracks().forEach((track) => peerConnection.addTrack(track, stream));
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("ice-candidate", { candidate: event.candidate, to: peerId });
+      }
+    };
+    peerConnection.ontrack = (event) => {
+      remoteVideoRef.current.srcObject = event.streams[0];
+    };
+    return peerConnection;
   };
 
   return (
@@ -93,15 +161,8 @@ const ChatApp = () => {
         <div className="border rounded-lg p-4 h-64 overflow-y-auto bg-gray-50">
           <ul className="space-y-2">
             {messages.map((msg, index) => (
-              <li
-                key={index}
-                className={`flex ${msg.sentByMe ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`p-2 mb-1 rounded-lg shadow-sm max-w-xs ${
-                    msg.sentByMe ? "bg-green-200 text-right" : "bg-white text-left"
-                  }`}
-                >
+              <li key={index} className={`flex ${msg.sentByMe ? "justify-end" : "justify-start"}`}>
+                <div className={`p-2 mb-1 rounded-lg shadow-sm max-w-xs ${msg.sentByMe ? "bg-green-200 text-right" : "bg-white text-left"}`}>
                   {msg.content}
                 </div>
               </li>
@@ -123,6 +184,13 @@ const ChatApp = () => {
             Send
           </button>
         </div>
+        <div className="mt-4">
+          <button onClick={startVideoChat} className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600">
+            Start Video Chat
+          </button>
+        </div>
+        {stream && <video ref={videoRef} autoPlay className="w-full rounded-lg shadow-lg" />}
+        <video ref={remoteVideoRef} autoPlay className="w-full rounded-lg shadow-lg mt-4" />
       </div>
     </div>
   );
