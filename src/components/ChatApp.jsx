@@ -7,29 +7,41 @@ const ChatApp = () => {
   const [chatId, setChatId] = useState("");
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
-  const userId = 1;
+  const [sentMessages, setSentMessages] = useState([]);
 
   useEffect(() => {
     socket.on("receive_message", (msg) => {
-      if (!msg.senderId) {
-        msg.senderId = -1; // Fallback in case senderId is missing
-      }
-      setMessages((prevMessages) => [...prevMessages, msg]);
+      setMessages((prevMessages) => {
+        if (
+          prevMessages.length > 0 &&
+          prevMessages[prevMessages.length - 1].content === msg.content
+        ) {
+          return prevMessages; // Prevent duplicate display
+        }
+        return [
+          ...prevMessages,
+          { ...msg, sentByMe: sentMessages.includes(msg.messageId) },
+        ];
+      });
     });
 
     return () => {
       socket.off("receive_message");
     };
-  }, []);
+  }, [sentMessages]);
 
   useEffect(() => {
     socket.on("chat_history", (history) => {
-      setMessages(history);
+      setMessages(history.map((msg) => ({ ...msg, sentByMe: false })));
     });
+
+    return () => {
+      socket.off("chat_history");
+    };
   }, []);
 
   const joinChat = () => {
-    if (chatId) {
+    if (chatId.trim()) {
       socket.emit("join_chat", chatId);
       socket.emit("get_chat_history", chatId);
       console.log("Joined chat:", chatId);
@@ -38,12 +50,23 @@ const ChatApp = () => {
 
   const sendMessage = () => {
     if (chatId && message.trim()) {
-      const newMessage = { senderId: userId, content: message };
-      socket.emit("send_message", {
+      const messageId = Date.now().toString();
+      const newMessage = {
         chatId,
-        senderId: userId,
         content: message,
+        messageId,
+        sentByMe: true,
+      };
+
+      socket.emit("send_message", newMessage);
+
+      setMessages((prev) => {
+        if (prev.length > 0 && prev[prev.length - 1].content === message) {
+          return prev; // Prevent duplicate display
+        }
+        return [...prev, newMessage];
       });
+      setSentMessages((prev) => [...prev, messageId]);
       setMessage("");
     }
   };
@@ -68,20 +91,19 @@ const ChatApp = () => {
           </button>
         </div>
         <div className="border rounded-lg p-4 h-64 overflow-y-auto bg-gray-50">
-          <ul>
+          <ul className="space-y-2">
             {messages.map((msg, index) => (
               <li
                 key={index}
-                className={`p-2 mb-2 rounded-lg shadow-sm ${
-                  msg.senderId === userId
-                    ? "bg-green-200 text-right"
-                    : "bg-white text-left"
-                }`}
+                className={`flex ${msg.sentByMe ? "justify-end" : "justify-start"}`}
               >
-                <span className="font-semibold">
-                  {msg.senderId === userId ? "Me" : `User ${msg.senderId}`}:
-                </span>{" "}
-                {msg.content}
+                <div
+                  className={`p-2 mb-1 rounded-lg shadow-sm max-w-xs ${
+                    msg.sentByMe ? "bg-green-200 text-right" : "bg-white text-left"
+                  }`}
+                >
+                  {msg.content}
+                </div>
               </li>
             ))}
           </ul>
